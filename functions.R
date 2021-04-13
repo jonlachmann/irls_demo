@@ -6,15 +6,15 @@
 # Calculate the full deviance for a model
 get_deviance <- function(beta, X, y, family) {
   mu <- family$linkinv(X %*% beta)
-  sum(family_b$dev.resids(y, mu, rep(1,nrow(X))))
+  sum(family$dev.resids(y, mu, rep(1,nrow(X))))
 }
 
 # Plot many columns in a matrix, log scale can be enabled too
-multiplot <- function (mat, logscale=F) {
+multiplot <- function (mat, logscale=F, ylim=c(min(mat), max(mat))) {
   if (logscale) {
     mat[mat > 0] <- log(mat[mat > 0])
     mat[mat < 0] <- -log(-mat[mat < 0])
   }
-  plot(mat[,1], type="l", ylim=c(min(mat),max(mat)))
+  plot(mat[,1], type="l", ylim=ylim)
   for (i in 2:ncol(mat)) lines(mat[,i], col=colors()[i*5])
 }

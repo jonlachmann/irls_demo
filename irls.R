@@ -36,8 +36,11 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
   }
 
   devhist <- matrix(NA,maxit,1)
+  rankhist <- matrix(NA,maxit,1)
   betahist <- matrix(NA,maxit,nvars)
   devhist[1] <- dev
+  betahist[1,] <- 0
+  explosions <- 0
   iter <- 1
   conv <- F
   while (!conv & iter < maxit) {
@@ -59,12 +62,16 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
       else X_s <- X[quanti,]
       w_s <- w[quanti]
       z_s <- z[quanti]
-      beta <- .Call(stats:::C_Cdqrls, X_s * as.numeric(w_s), z_s * w_s, 1e-7, check=FALSE)$coefficients
+      fit <- .Call(stats:::C_Cdqrls, X_s * as.numeric(w_s), z_s * w_s, 1e-7, check=FALSE)
+      beta <- fit$coefficients
     } else if (subs != 1) {
-      beta <- .Call(stats:::C_Cdqrls, X[subsi,] * as.numeric(w), z * w, 1e-7, check=FALSE)$coefficients
+      fit <- .Call(stats:::C_Cdqrls, X[subsi,] * as.numeric(w), z * w, 1e-7, check=FALSE)
+      beta <- fit$coefficients
     } else {
-      beta <- .Call(stats:::C_Cdqrls, X * as.numeric(w), z * w, 1e-7, check=FALSE)$coefficients
+      fit <- .Call(stats:::C_Cdqrls, X * as.numeric(w), z * w, 1e-7, check=FALSE)
+      beta <- fit$coefficients
     }
+    rankhist[iter] <- fit$rank
 
     # Do new subsampling
     if (subs != 1) subsi <- sample.int(nobs, sub_size, replace=F)
@@ -93,13 +100,18 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
     }
     # Check for exploding deviance in subsampling
     if (iter > expl[1] && (dev-devold) / abs(devold) > expl[2]) {
-      print(paste0("Exploding deviance at iteration ", iter))
-      break
-    }
+      # Reset beta and start counting explosions
+      beta <- betaold
+      explosions <- explosions + 1
+      if (explosions > 5) {
+        print(paste0("5 exploding deviances at iteration ", iter))
+        break
+      }
+    } else explosions <- 0
 
-    betahist[iter,] <- beta
     iter <- iter + 1
+    betahist[iter,] <- beta
     devhist[iter] <- dev
   }
-  return(list(coefficients=beta, iter=iter, loglik=-devhist[iter]/2, devhist=devhist[1:iter], betahist=betahist[1:(iter-1),]))
+  return(list(coefficients=beta, iter=iter, loglik=-devhist[iter]/2, rank=rankhist[iter-1], devhist=devhist[1:iter], betahist=betahist[1:iter,], rankhist=rankhist))
 }

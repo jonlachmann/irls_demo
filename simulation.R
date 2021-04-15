@@ -1,13 +1,15 @@
-# Title     : TODO
-# Objective : TODO
+# Title     : Simulation study
+# Objective : Explore the performance of subsampling IRLS with a simulation study
 # Created by: jonlachmann
 # Created on: 2021-04-13
 
+# Set up simulations study parameters
 nvars <- 15
 nobs <- 10^6
+full_model_count <- 2^nvars
 
 library(mvtnorm)
-# Generate data
+# Generate the data to use
 {
   set.seed(1911)
   covmat <- matrix(rnorm(nvars^2, runif(nvars^2, -5,5), runif(nvars^2, 0, 5)), nvars)
@@ -20,39 +22,7 @@ library(mvtnorm)
   million_y_l <- rbinom(nobs, 1, (1/(1+exp(-million_y_g))))
 }
 
-system.time(glmmm <- glm.fit(million_x[1:1000000,], million_y_l[1:1000000], family=binomial()))
-system.time(glmmm <- glm.fit(million_x[1:1000000,], million_y_l[1:1000000], family=binomial(), start=sub_mod$betahist[121,]))
-
-system.time(quant_mod <- irls(million_x, million_y_l, binomial(), 0.1, 1, cooling = c(10,0.8,0.9), expl=c(100,3)))
-system.time(sub_mod2 <- irls(million_x, million_y_l, binomial(), 1, 0.01, maxit=300, cooling = c(4,0.9,0.99), expl=c(3,1.5)))
-both_mod <- irls(million_x, million_y_l, binomial(), 0.5, 0.1, cooling = c(4,0.7,0.7), expl=c(3,1.5))
-
-glm.fit()
-
-min(sub_mod$devhist)
-plot(sub_mod$devhist[10:300], type="l")
-par(mfrow=c(4,4))
-for (i in 1:16) {
-  multiplot(cbind(sub_mod2$betahist[,i], true_betas[,i]))
-}
-
-library(GMJMCMC)
-
-true_betas <- matrix(rep(glmmm$coefficients, 299), 299, byrow=T)
-
-plot(quant_mod$devhist, type="l")
-get_deviance(sub_mod$betahist[11,], million_x, million_y_l, binomial())
-mean(sub_mod$devhist[100:200])
-
-logistic.loglik.aic <- function (y, x, model, complex, params) {
-  suppressWarnings({mod <- glm.fit(as.matrix(x[,model]), y, family=binomial())})
-  ret <- -(mod$deviance/2) - mod$rank
-  return(ret)
-}
-
-full_model_count <- 2^15
-
-# Calculate the full model set
+# Calculate the full model set using regular glm (SLOW!)
 full_10K <- vector("list", full_model_count)
 progress <- 0
 for (i in 1:full_model_count) {
@@ -62,116 +32,108 @@ for (i in 1:full_model_count) {
   if (i %% floor(full_model_count/40) == 0) progress <- print.progressbar(progress, 40)
 }
 
-system.time(glmmm <- glm.fit(million_x[1:10000,], million_y_l[1:10000], family=binomial()))
-system.time(sub_mod <- irls(million_x[1:10000,], million_y_l[1:10000], binomial(), 1, 0.1, maxit=300, cooling = c(3,0.9,0.95), expl=c(3,3)))
-min(sub_mod$devhist)
-get_deviance(sub_mod$betahist[which.min(sub_mod$devhist),], million_x[1:10000,], million_y_l[1:10000], binomial())
-
-logistic.loglik.aic.sub <- function (y, x, model, complex, params) {
-  suppressWarnings({mod <- irls(as.matrix(x[,model]), y, binomial(), 1, 0.1, maxit=300, cooling = c(3,0.9,0.95), expl=c(3,3))})
-  ret1 <- mod$loglik - mod$rank
-  dev2 <- get_deviance(mod$betahist[which.min(mod$devhist),], as.matrix(x[,model]), y, binomial())
-  ret2 <- -(dev2/2) - mod$rank
-  return(list(sub=ret1, full=ret2))
-}
-
-full_10K_sub <- vector("list", full_model_count)
-full_10K_sub_full <- vector("list", full_model_count)
-library(parallel)
-full_10K_res <- mclapply(X=1:full_model_count, FUN=function(i) {
-  modelvector <- as.logical(c(T,intToBits(i)[1:15]))
-  try({
-    logliks <- logistic.loglik.aic.sub(million_y_l[1:10000], million_x[1:10000,], modelvector, NULL, NULL)
-    return(list(sub=list(prob=NA, model=modelvector[-1], crit=logliks$sub, alpha=NA),
-              sub_full=list(prob=NA, model=modelvector[-1], crit=logliks$full, alpha=NA)))
-  })
-})
-
-comparison <- matrix(NA,full_model_count, 3)
-for (i in 1:full_model_count){
-  try({comparison[i,1] <- full_10K[[i]]$crit})
-  try({comparison[i,2] <- full_10K_res[[i]]$sub$crit})
-  try({comparison[i,3] <- full_10K_res[[i]]$sub_full$crit})
-  print(i)
-}
-full_10K[[1]]$crit
-full_10K_res[[1]]$sub$crit
-
-comparison <- comparison[!is.na(comparison[,2]),]
-
-comparison_diffs <- matrix(NA, nrow(comparison), 2)
-comparison_diffs[,1] <- comparison[,1] - comparison[,2]
-comparison_diffs[,2] <- comparison[,1] - comparison[,3]
-
-cor(comparison)
-
-quantiles <- (comparison>=quantile(comparison[,1], (0.99)))
-
-bestmods <- matrix(comparison[quantiles], ncol=3, byrow=T)
-
-rmsediff1_m <- sqrt(mean((modelprobs[,2]-modelprobs[,1])^2))
-rmsediff2_m <- sqrt(mean((modelprobs[,3]-modelprobs[,1])^2))
-
-modelprobs <- bestmods / colSums(bestmods)
-modelprobs_all <- comparison / colSums(comparison)
-
-rmsediff1_m_all <- sqrt(mean((modelprobs_all[,2]-modelprobs_all[,1])^2))
-rmsediff2_m_all <- sqrt(mean((modelprobs_all[,3]-modelprobs_all[,1])^2))
-
-
-multiplot(matrix(comparison[quantiles], ncol=3, byrow=T))
-
-matrix(comparison[quantiles], ncol=3, byrow=T)
-
-rmsediff1 <- sqrt(mean((comparison_diffs[,1])^2))
-rmsediff2 <- sqrt(mean((comparison_diffs[,2])^2))
-
-multiplot(comparison_diffs[1:500,], ylim=c(-150,200))
-
-multiplot(comparison[1:500,])
-
-
-truee <- matrix(unlist(full_10K), ncol=18, byrow=T)
-v1_mat <- matrix(unlist(sub_models_v1), ncol=18, byrow=T)
-
-hist(truee[,17], breaks=50)
-hist(v1_mat[,17], breaks=50)
-
+# Calculate the full model set using 1% at each iteration and two methods
+full_10K_sub_1 <- vector("list", full_model_count)
+full_10K_sub2_1 <- vector("list", full_model_count)
+progress <- 0
 for (i in 1:full_model_count) {
-  if (abs(sub_models_v1[[i]]$crit -)
+  modelvector <- as.logical(c(T,intToBits(i)[1:15]))
+  logliks <- logistic.loglik.aic.sub(million_y_l[1:10000], million_x[1:10000,], modelvector, NULL, list(subs = 0.01))
+  full_10K_sub_1[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$sub, alpha=NA)
+  full_10K_sub2_1[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$full, alpha=NA)
+  if (i %% floor(full_model_count/40) == 0) progress <- print.progressbar(progress, 40)
+}
+
+# Calculate the full model set using 2% at each iteration and two methods
+full_10K_sub_2 <- vector("list", full_model_count)
+full_10K_sub2_2 <- vector("list", full_model_count)
+progress <- 0
+for (i in 1:full_model_count) {
+  modelvector <- as.logical(c(T,intToBits(i)[1:15]))
+  logliks <- logistic.loglik.aic.sub(million_y_l[1:10000], million_x[1:10000,], modelvector, NULL, list(subs = 0.02))
+  full_10K_sub_2[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$sub, alpha=NA)
+  full_10K_sub2_2[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$full, alpha=NA)
+  if (i %% floor(full_model_count/40) == 0) progress <- print.progressbar(progress, 40)
+}
+
+# Calculate the full model set using 10% at each iteration and two methods
+full_10K_sub_10 <- vector("list", full_model_count)
+full_10K_sub2_10 <- vector("list", full_model_count)
+progress <- 0
+for (i in 1:full_model_count) {
+  modelvector <- as.logical(c(T,intToBits(i)[1:15]))
+  logliks <- logistic.loglik.aic.sub(million_y_l[1:10000], million_x[1:10000,], modelvector, NULL, list(subs = 0.1))
+  full_10K_sub_10[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$sub, alpha=NA)
+  full_10K_sub2_10[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$full, alpha=NA)
+  if (i %% floor(full_model_count/40) == 0) progress <- print.progressbar(progress, 40)
 }
 
 margprobs_10K_true <- marginal.probs.renorm(full_10K)
-margprobs_10K_v1 <- marginal.probs.renorm(sub_models_v1)
-margprobs_10K_v2 <- marginal.probs.renorm(sub_models_v2)
+margprobs_10K_v1 <- marginal.probs.renorm(full_10K_sub_2)
+margprobs_10K_v2 <- marginal.probs.renorm(full_10K_sub2_2)
 
-par(mfrow=c(1,1))
-barplot(margprobs_10K_true, main="True marginal inclusion probabilities")
-barplot(margprobs_10K_v1, main="Estimated marginal inclusion probabilities")
+barplot(margprobs_10K_true)
+barplot(margprobs_10K_v1)
+barplot(margprobs_10K_v2)
 
-sub_models_v1 <- vector("list", full_model_count)
-sub_models_v2 <- vector("list", full_model_count)
-for (i in 1:full_model_count) {
-  if (length(full_10K_res[[i]]) == 2) {
-    sub_models_v1[[i]] <- full_10K_res[[i]][[1]]
-    sub_models_v2[[i]] <- full_10K_res[[i]][[2]]
-  }
+
+
+v1_2_mat <- matrix(unlist(full_10K_sub_2), ncol=18, byrow=T)
+v2_2_mat <- matrix(unlist(full_10K_sub2_2), ncol=18, byrow=T)
+
+hist(v1_2_mat[,17], breaks=150)
+hist(v2_2_mat[,17], breaks=150)
+
+compare2 <- matrix(NA, full_model_count, 3)
+for (i in 1:full_model_count){
+  try({compare2[i,1] <- full_10K[[i]]$crit})
+  print(i)
 }
-for (i in 1:full_model_count) {
-  if (length(sub_models_v1[[i]]) != 4) sub_models_v1[[i]] <- NULL
-  if (length(sub_models_v2[[i]]) != 4) sub_models_v1[[i]] <- NULL
-}
+
+multiplot(compare2[(compare2[,1] > -3000 & compare2[,1] < -2950),c(1,3)])
+
+best50 <- compare2[(compare2[,1] > -114.54), c(1,3)]
+
+best50exp <- exp(best50)
+
+best50expmarg1 <- best50[,1] / sum(best50[,1])
+best50expmarg2 <- best50[,2] / sum(best50[,2])
+multiplot(cbind(best50expmarg1, best50expmarg2))
+
+(compare2[,1] < -3000 & compare2[,1] > -2700)
+
+compare2[,2] <- v1_2_mat[,17]
+compare2[,3] <- v2_2_mat[,17]
+cor(compare2)
+
+ddiff <- compare2[,1] - compare2[,3]
+
+compare2
+
+hist(ddiff, breaks=1500, xlim=c(0,200), freq=F)
+
+plot(ddiff[1:20000], type="l")
+
+sort(compare2, )
+
+mean(compare2[,1]) - mean(compare2[,3])
+
+comparesort <- compare2[order(compare2[,1]),]
+
+multiplot(comparesort[32200:32768,c(1,3)])
+
+library(Rmpfr)
 
 
+compare2mpfr1 <- mpfr(compare2[,1], 256)
+compare2mpfr3 <- mpfr(compare2[,3], 256)
 
-save(full_10K_res, file="full10Kres")
+exps <- exp(compare2mpfr3)
+sum(exps)
 
-for (i in 1:10) {
-  modelvector <- as.logical(c(T,intToBits(1)[1:15]))
-  logliks <- logistic.loglik.aic.sub(million_y_l[1:10000], million_x[1:10000,], modelvector, NULL, NULL)
-  full_10K_sub[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$sub, alpha=NA)
-  full_10K_sub_full[[i]] <- list(prob=NA, model=modelvector[-1], crit=logliks$full, alpha=NA)
+exps[32767]
 
-  if (i %% floor(full_model_count/40) == 0) progress <- print.progressbar(progress, 40)
-}
+exps <- cbind(exps, exp(compare2mpfr3-max(compare2mpfr3)+100))
+
+
 

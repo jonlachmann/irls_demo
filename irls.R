@@ -17,22 +17,20 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
   temp <- cooling[2]
   nobs <- nrow(X)
   nvars <- ncol(X)
-  weights <- rep(1,nobs)
-  eval(family$initialize)
 
   # Get initial eta, mu and deviance
-  eta <- family$linkfun(mustart)
   if (subs != 1) {
     # Get subsample
     sub_size <- nobs*subs
     subsi <- sample.int(nobs, sub_size, replace=F)
 
-    eta <- eta[subsi]
+    eta <- family$linkfun((y[subsi]+0.5)/2)
     mu <- family$linkinv(eta)
-    dev <- sum(family$dev.resids(y[subsi], mu, weights[subsi]))/subs
+    dev <- sum(family$dev.resids(y[subsi], family$linkinv(rowSums(X[subsi,,drop=F])), 1))/subs
   } else {
+    eta <- family$linkfun((y+0.5)/2)
     mu <- family$linkinv(eta)
-    dev <- sum(family$dev.resids(y, mu, weights))
+    dev <- sum(family$dev.resids(y, family$linkinv(rowSums(X)), 1))
   }
 
   devhist <- matrix(NA,maxit,1)
@@ -58,14 +56,14 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
     # Do WLS, use quantile if set
     if (quant != 1) {
       quanti <- (w>=quantile(w, (1-quant)))
-      if (subs != 1) X_s <- X[subsi,][quanti,]
-      else X_s <- X[quanti,]
+      if (subs != 1) X_s <- X[subsi,,drop=F][quanti,,drop=F]
+      else X_s <- X[quanti,,drop=F]
       w_s <- w[quanti]
       z_s <- z[quanti]
       fit <- .Call(stats:::C_Cdqrls, X_s * as.numeric(w_s), z_s * w_s, 1e-7, check=FALSE)
       beta <- fit$coefficients
     } else if (subs != 1) {
-      fit <- .Call(stats:::C_Cdqrls, X[subsi,] * as.numeric(w), z * w, 1e-7, check=FALSE)
+      fit <- .Call(stats:::C_Cdqrls, X[subsi,,drop=F] * as.numeric(w), z * w, 1e-7, check=FALSE)
       beta <- fit$coefficients
     } else {
       fit <- .Call(stats:::C_Cdqrls, X * as.numeric(w), z * w, 1e-7, check=FALSE)
@@ -77,7 +75,7 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
     if (subs != 1) subsi <- sample.int(nobs, sub_size, replace=F)
 
     # Get eta
-    if (subs != 1) eta <- X[subsi,] %*% beta
+    if (subs != 1) eta <- X[subsi,,drop=F] %*% beta
     else eta <- X %*% beta
 
     # Get mu
@@ -85,8 +83,8 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
 
     # Calculate deviance
     devold <- dev
-    if (subs != 1) dev <- sum(family$dev.resids(y[subsi], mu, weights[subsi]))/subs
-    else dev <- sum(family$dev.resids(y, mu, weights))
+    if (subs != 1) dev <- sum(family$dev.resids(y[subsi], mu, 1))/subs
+    else dev <- sum(family$dev.resids(y, mu, 1))
 
     # Do cooling schedule
     if (iter > cooling[1]+2) {
@@ -113,5 +111,5 @@ irls <- function (X, y, family, quant=1, subs=1, maxit=100, tol=1e-7, cooling = 
     betahist[iter,] <- beta
     devhist[iter] <- dev
   }
-  return(list(coefficients=beta, iter=iter, loglik=-devhist[iter]/2, rank=rankhist[iter-1], devhist=devhist[1:iter], betahist=betahist[1:iter,], rankhist=rankhist))
+  return(list(coefficients=beta, iter=iter, loglik=-devhist[iter]/2, rank=rankhist[iter-1], devhist=devhist[1:iter], betahist=betahist[1:iter, ,drop=F], rankhist=rankhist))
 }
